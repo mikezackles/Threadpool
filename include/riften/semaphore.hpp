@@ -29,18 +29,16 @@
 #include <atomic>
 #include <cassert>
 
-namespace riften {
-
-namespace detail {
-
 #if defined(_WIN32)
 //---------------------------------------------------------
 // Semaphore (Windows)
 //---------------------------------------------------------
 
-#    include <windows.h>
-#    undef min
-#    undef max
+#include <windows.h>
+#undef min
+#undef max
+
+namespace riften::detail {
 
 class Semaphore {
   private:
@@ -62,13 +60,17 @@ class Semaphore {
     void signal(int count = 1) { ReleaseSemaphore(m_hSema, count, NULL); }
 };
 
+}
+
 #elif defined(__MACH__)
 //---------------------------------------------------------
 // Semaphore (Apple iOS and OSX)
 // Can't use POSIX semaphores due to http://lists.apple.com/archives/darwin-kernel/2009/Apr/msg00010.html
 //---------------------------------------------------------
 
-#    include <mach/mach.h>
+#include <mach/mach.h>
+
+namespace riften::detail {
 
 class Semaphore {
   private:
@@ -96,12 +98,16 @@ class Semaphore {
     }
 };
 
+}
+
 #elif defined(__unix__)
 //---------------------------------------------------------
 // Semaphore (POSIX, Linux)
 //---------------------------------------------------------
 
-#    include <semaphore.h>
+#include <semaphore.h>
+
+namespace riften::detail {
 
 class Semaphore {
   private:
@@ -135,13 +141,15 @@ class Semaphore {
     }
 };
 
+}
+
 #else
 
 #    error Unsupported platform!
 
 #endif
 
-}  // namespace detail
+namespace riften {
 
 class Semaphore {
   public:
