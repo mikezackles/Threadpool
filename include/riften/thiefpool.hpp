@@ -6,8 +6,8 @@
 #include <cassert>
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <ratio>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -24,32 +24,15 @@ namespace riften {
 class Thiefpool {
   public:
     // Construct a `Thiefpool` with `num_threads` threads.
-    explicit Thiefpool(std::size_t num_threads = std::thread::hardware_concurrency()) : _deques(num_threads) {
-        for (std::size_t i = 0; i < num_threads; ++i) {
-            _threads.emplace_back([&, id = i](std::stop_token tok) {
-                jump(id);  // Get a different random stream
-                do {
-                    // Wait to be signalled
-                    _deques[id].sem.acquire_many();
-
-                    std::size_t spin = 0;
-
-                    do {
-                        // Prioritise our work otherwise steal
-                        std::size_t t = spin++ < 100 || !_deques[id].tasks.empty()
-                                            ? id
-                                            : xoroshiro128() % _deques.size();
-
-                        if (std::optional one_shot = _deques[t].tasks.steal()) {
-                            _in_flight.fetch_sub(1, std::memory_order_release);
-                            std::invoke(std::move(*one_shot), t);
-                        }
-
-                        // Loop until all the work is done.
-                    } while (_in_flight.load(std::memory_order_acquire) > 0);
-
-                } while (!tok.stop_requested());
-            });
+    template <typename Callback>
+    explicit Thiefpool(Callback &&callback, std::size_t num_threads = std::thread::hardware_concurrency())
+        : _deques(num_threads), _num_threads(num_threads) {
+        if (_num_threads == 0) _num_threads = 1;
+        for (std::size_t i = 0; i < _num_threads; ++i) {
+            _threads.emplace_back(
+                [&, id = i, callback = std::forward<Callback>(callback)](std::stop_token tok) mutable {
+                    std::forward<Callback>(callback)([&] { this->start_thread_loop(id, tok); });
+                });
         }
     }
 
@@ -63,6 +46,8 @@ class Thiefpool {
         execute(std::forward<F>(f));
     }
 
+    auto thread_count() const -> std::size_t { return _num_threads; }
+
     ~Thiefpool() {
         for (auto &t : _threads) {
             t.request_stop();
@@ -73,6 +58,30 @@ class Thiefpool {
     }
 
   private:
+    void start_thread_loop(std::size_t id, std::stop_token const &tok) {
+        jump(id);  // Get a different random stream
+        do {
+            // Wait to be signalled
+            _deques[id].sem.acquire_many();
+
+            std::size_t spin = 0;
+
+            do {
+                // Prioritise our work otherwise steal
+                std::size_t t
+                    = spin++ < 100 || !_deques[id].tasks.empty() ? id : xoroshiro128() % _deques.size();
+
+                if (std::optional one_shot = _deques[t].tasks.steal()) {
+                    _in_flight.fetch_sub(1, std::memory_order_release);
+                    std::invoke(std::move(*one_shot), t);
+                }
+
+                // Loop until all the work is done.
+            } while (_in_flight.load(std::memory_order_acquire) > 0);
+
+        } while (!tok.stop_requested());
+    }
+
     // Fire and forget interface.
     template <typename F> void execute(F &&f) {
         std::size_t i = count++ % _deques.size();
@@ -91,6 +100,7 @@ class Thiefpool {
     std::size_t count = 0;
     std::vector<named_pair> _deques;
     std::vector<std::jthread> _threads;
+    std::size_t _num_threads;
 };
 
 }  // namespace riften
