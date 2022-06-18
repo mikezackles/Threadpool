@@ -30,9 +30,7 @@ class Thiefpool {
         if (_num_threads == 0) _num_threads = 1;
         for (std::size_t i = 0; i < _num_threads; ++i) {
             _threads.emplace_back(
-                [&, id = i, callback = std::forward<Callback>(callback)](std::stop_token tok) mutable {
-                    std::forward<Callback>(callback)([&] { this->start_thread_loop(id, tok); });
-                });
+                [=](std::stop_token tok) mutable { callback([&] { this->start_thread_loop(i, tok); }); });
         }
     }
 
